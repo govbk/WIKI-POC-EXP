@@ -1,0 +1,146 @@
+# 使用LDAP查询快速提升域权限
+
+from:https://www.netspi.com/blog/entryid/214/faster-domain-escalation-using-ldap
+
+0x00 背景
+-------
+
+* * *
+
+如果你是一个渗透测试师，那么你大概早都清楚从一个本地管理员权限提升至域管理员权限只需要几步就可以，这些步骤通常是通过不同的方法来偷取域管理密码，密码hash，或者是认证token，如果你不幸遇到没有域管登陆的系统然后就只能放弃，然后再去找有域管登陆的机器。一段时间前我写了一篇文章 “[5 Ways to Find Systems Running Domain Admin Processes](https://www.netspi.com/blog/entryid/132/5-ways-to-find-systems-running-domain-admin-processes)” 其中列出了一些常见的方法，但是最近我又发现了另外一种方法，所以在这篇文章里我会介绍通过LDAP查询” ServicePrincipleName”属性来找到域管可能登陆的机器的方法。同样也会给出一些Powershell模块来自动化完成，希望这对渗透测试师和想知道域管理账号在哪里登陆的管理员们起到帮助。
+
+0x01 LDAP概述
+-----------
+
+* * *
+
+对于那些并不熟悉Lightwieght Directory Access Protocol ([LDAP](http://en.wikipedia.org/wiki/Ldap))人来讲，它大概像是一个目录信息。虽然LDAP在很多平台被使用，但在windows的域环境中它却是 Active Directory Services ([ADS](http://en.wikipedia.org/wiki/Active_Directory))的核心，ADS负责windows域的认证和授权，但也储存了大量的信息，这些信息包括但不限于域用户，计算机用户，域用户组，安全策略和软件更新。每一个对象都有多种属性与之关联，并且其中大部分的属性都可以通过LDAP查询。比如每一个用户都有一个”Created”的属性包含了账号创建时间。同样的每一个账户都有一个” ServicePrincipleName”属性，这也是本文接下来的重点。
+
+0x02 ServicePrincipleName 概述
+----------------------------
+
+* * *
+
+微软的文档中是这样陈述的：”ServicePrincipleName（SPN）是客户端用来唯一标识一个服务实例的名称”,在略读后发现这大概为了便利widnows域中的[Kerberos](http://technet.microsoft.com/en-us/library/bb742516.aspx)认证，但我们可以用它来做一些其他的事，对于我们来说，多值的ServicePrincipleName是很方便的。因为在Active Directory中任何一个用户和计算机对象都储存了账户在域中的运行的服务信息。所以这就可以很方便的定位像IIS、SQL Server，及LDAP。同样也可以很方便的查询到对应的用户在哪里登陆(比如域管理员)。这相对来说要简单些，因为SPN有一个标准化的命令约定。SPN格式为SERVICE/HOST,但有时也会包含端口像 SERVICE/HOST:PORT。 比如，如果一个域用户曾在acme.com域中运行DNS和SQL Server服务，那么SPN项看起来就像是这样：
+
+```
+DNS/Server1.acme.com
+MSSQLSvc/Server2.acme.com:1433
+
+```
+
+在LDAP中可以非常直截了当的查询基础的SPN信息，比如一个经过认证的用户就可以用adfind.exe (www.joeware.net) 与下面的命令来列出域中注册的所有的SQL Server实例:
+
+```
+C: >Adfind.exe -f "ServicePrincipalName=MSSQLSvc*"
+
+```
+
+同样windows server 2008中的”setspn.exe”工具也可以针对某个用户快速查询SPN:
+
+```
+C: >setspn.exe –l user1
+
+```
+
+在以前的渗透测试中，我发现企业通常都存在域管理员运行服务的现象，结果是在提权阶段简单的在LDAP中查询域管用户的信息然后检查SPN项大概就可以找到其登陆过的服务器。然而adfind和setspn都缺少默认选项来快速查询SPN，所以我写了一个Powershell模块”[Get-SPN](https://github.com/nullbind/Powershellery/blob/master/Stable-ish/Get-SPN/Get-SPN.psm1)”来简化这一步骤。
+
+0x03 Get-SPN PowerShell Module
+------------------------------
+
+* * *
+
+Get-SPN这个模块提供了一种简单的方法在LDAP中快速查询符合指定的用户、组、或者SPN服务名称。对于那些有兴趣的人可以在我的Github上下载[here](https://github.com/nullbind/Powershellery/blob/master/Stable-ish/Get-SPN/Get-SPN.psm1)。请注意需要在powershell v3.0版本下运行。这个模块可以手工安装，通过下载Get-SPN.psm1文件到下面两个目录中任意一处:
+
+```
+%USERPROFILE%DocumentsWindowsPowerShellModules
+%WINDIR%System32WindowsPowerShellv1.0Modules
+
+```
+
+可以这样导入模块:
+
+```
+Import-Module .Get-SPN.psm1
+
+```
+
+![](http://drops.javaweb.org/uploads/images/db1b13195d2e1d6f4e046bcfedd693fba418730b.jpg)
+
+安装后，下面是在我的测试环境下的几个示例，来帮助你理解使用，更多的示例你可以通过使用help来发现。
+
+```
+Get-Help Get-SPN -full
+
+```
+
+查找所有域管理员运行的服务 如果你在一个域机器上以域用户或者本地system权限运行那么参照下面的命令:
+
+```
+Get-SPN -type group -search "Domain Admins" -List yes | Format-Table –Autosize
+
+```
+
+![](http://drops.javaweb.org/uploads/images/b1eb868f90e52031f1f9b35b0d93e9602e92de38.jpg)
+
+这一命令也可以使用-list参数以获取更多详细的输出，比如:
+
+```
+Get-SPN -type group -search "Domain Admins"
+
+```
+
+![](http://drops.javaweb.org/uploads/images/08730ed044db6788d9fbaf787f507b46ab2916a3.jpg)
+
+如果你在一个非域系统上以域凭证执行那么可以使用下面的命令，“DomainController”和 “Credential”选项也可以用来在Get-SPN中查询.
+
+```
+Get-SPN  -type group -search "Domain Admins" -List yes -DomainController 192.168.1.100 -Credential domainuser | Format-Table –Autosize
+
+```
+
+查找所有域中所有的SQL Server服务 如果你在一个域机器上以域用户或者本地system权限运行那么参照下面的命令:
+
+```
+Get-SPN  -type service -search "MSSQLSvc*" -List yes | Format-Table –Autosize
+
+```
+
+![](http://drops.javaweb.org/uploads/images/0176bf16a6857a098e0b0d5b55c57576729b241b.jpg)
+
+针对那些对除SQL server以外的服务感兴趣的人，下面列出一些SPN服务名称.
+
+> alerter,appmgmt,browser,cifs,cisvc,clipsrv,dcom,dhcp,dmserver,dns,dnscache,eventlog,eventsystem,fax, http,ias,iisadmin,messenger,msiserver,mcsvc,netdde,netddedsm,netlogon,netman,nmagent,oakley,plugplay,policyagent, protectedstorage,rasman,remoteaccess,replicator,rpc,rpclocator,rpcss,rsvp,samss,scardsvr,scesrv,schedule,scm,seclogon, snmp,spooler,tapisrv,time,trksvr,trkwks,ups,w3svc,wins,www
+
+查找域用户名匹配关键词的ServicePrincipalName项 如果你在一个域机器上以域用户或者本地system权限运行那么参照下面的命令:
+
+```
+Get-SPN  -type user -search "*svc*" -List yes
+
+```
+
+![](http://drops.javaweb.org/uploads/images/02934f76d9910004798dd2acf690d5d48ef7b48d.jpg)
+
+0x04 小结
+-------
+
+* * *
+
+在你打算用SPN找到域管理账户登录过的系统时，我要告诉你几点限制。 1，并不是所有的域管理账户都会运行服务。 2，SPN在应用程序安装后自动注册，但是账户在程序安装后发现改变，如果不是人为添加那么在SPN中将不会表现。 最后，大多数情况下，SPN对于查找域管理账户非常有用，但是在一些环境下它却毫无作为。 无论如何，利用它找到域管登陆过的系统，意味着你不需要执行任何扫描工作，或者拓展shell，这是非常好的。这样有助于减少在渗透测试中的攻击指纹识别和检测。最后不要忘记ServicePrincpleNames可以用来定位重要的目标，比如SQL Server，Web Server,及其他域中的服务。 Good hunting. Have fun and hack responsibly. :)
+
+0x05 参考
+-------
+
+* * *
+
+http://technet.microsoft.com/en-us/library/cc731241.aspx
+
+http://msdn.microsoft.com/en-us/library/dd878324(v=vs.85).aspx
+
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms677949(v=vs.85).aspx
+
+http://go.microsoft.com/fwlink/?LinkId=198395
+
+http://www.microsoft.com/en-us/download/details.aspx?id=15326
+
+http://technet.microsoft.com/en-us/library/aa996205%28v=exchg.65%29.aspx
